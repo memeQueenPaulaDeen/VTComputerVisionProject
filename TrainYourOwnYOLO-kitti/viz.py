@@ -1,3 +1,5 @@
+import sys
+
 from bounding_box import bounding_box as bb
 import pandas as pd
 import os
@@ -7,15 +9,17 @@ import swifter
 import numpy as np
 
 def int2ImgPath(path,i):
-	return path + str(i).rjust(6,'0')+".png"
+	return os.path.join(path, str(i).rjust(6,'0')+".png")
 
-def addBox(row,image,color,labelName='label'):
-	bb.add(image,row.bbl,row.bbt,row.bbr,row.bbb,row[labelName],color)
+def addBox(row,image,color,labelName='label',labelAug = ''):
+	bb.add(image,row.bbl,row.bbt,row.bbr,row.bbb,row[labelName]+labelAug,color)
 
 def move(deltax,deltay,df,asNewRow=False,bblist =None):
 	df['move'] = False
 	if bblist != None:
 		df.loc[df['bbid'].isin(bblist),'move'] =True
+	else:
+		df['move'] = True
 	if asNewRow:
 		tdf = copy.deepcopy(df)
 	else:
@@ -190,30 +194,83 @@ def get_iou(bb1, bb2):
 
     return iou ,bbl, bbr, bbt, bbb
 
+def plotIOUforMerged(mdf,imageNum,imagePath,bbidList = None,pltGT = True,pltIOU = True, pltPred = True):
+
+	df = mdf.loc[mdf['img'] == imageNum]
+	if bbidList != None:
+		df = df.loc[df.bbid.isin(bbidList)]
+
+	print(df)
+
+	ycols = ['img', 'bbid', 'label', 'bbl','bbt','bbr','bbb','sameLabel','falseNegative','falsePositive','missClassification']
+	hcols = ['img', 'bbid', 'hlabel', 'bblh','bbth','bbrh','bbbh','sameLabel','falseNegative','falsePositive','missClassification']
+	icols = ['img', 'bbid', 'label', 'hlabel', 'bbli','bbti','bbri','bbbi','sameLabel','falseNegative','falsePositive','missClassification','iou']
+
+
+	y = df[ycols]
+	y = y.dropna()
+
+	yimage = cv2.imread(int2ImgPath(imagePath, imageNum), cv2.IMREAD_COLOR)
+
+	y['c'] = pd.Series('silver',index=y.index)
+	y.loc[y.falseNegative == True, 'c'] = 'purple'
+	if pltGT:
+		y.apply(lambda x: addBox(x, yimage, x.c), axis=1)
+
+	h = df[hcols]
+	h = h.dropna()
+	h['c'] = pd.Series('blue',index=h.index)
+	h.loc[h.falsePositive == True,'c'] = 'orange'
+	h.loc[h.missClassification == True, 'c'] = 'red'
+	h.rename(columns={'bblh':'bbl','bbth':'bbt','bbrh':'bbr','bbbh':'bbb','hlabel':'label'},inplace=True)
+	if pltPred:
+		h.apply(lambda x: addBox(x, yimage, x.c), axis=1)
+
+
+	i = df[icols]
+	i = i.dropna()
+	i['c'] = pd.Series('green',index=i.index)
+	i.loc[i.missClassification == True,'c'] = 'yellow'
+	i.loc[i.falsePositive == True,'c'] = 'orange'
+	i.rename(columns={'bbli':'bbl','bbti':'bbt','bbri':'bbr','bbbi':'bbb'},inplace=True)
+	if pltIOU:
+		i.apply(lambda x: addBox(x, yimage, x.c, 'label', labelAug=' IOU ' + "{:.2f}".format(x.iou)), axis=1)
+
+
+	cv2.imshow('Y', yimage)
+	# cv2.imshow('H, IOY', himage)
+	cv2.waitKey(0)
+
 
 def plotIOUOverlapForImageNum(imageNum,df,hdf,ioudf):
 	y = df.loc[df['img'] == imageNum]
 	# y = move(70,-55,y,asNewRow=True)
 	yimage = cv2.imread(int2ImgPath(imagePath, imageNum), cv2.IMREAD_COLOR)
+	# yyimage = cv2.imread(int2ImgPath(imagePath, imageNum), cv2.IMREAD_COLOR)
+	# y.apply(lambda x: addBox(x, yimage, 'red',labelAug=str(x.bbid)), axis=1)
 	y.apply(lambda x: addBox(x, yimage, 'red'), axis=1)
+	# y.apply(lambda x: addBox(x, yyimage, 'red'), axis=1)
 	h = hdf.loc[hdf['img'] == imageNum]
 	# h =df.loc[df['img']==imageNum]
-	# h = move(0,40,h,bblist=[1])
-	# h = move(-90,70,h,asNewRow=True)
+	# h = move(60, -80,h)
+	# h = move(-80,190,h,asNewRow=True)
 	# himage = cv2.imread(int2ImgPath(imagePath,imageNum), cv2.IMREAD_COLOR)
 	h.apply(lambda x: addBox(x, yimage, 'green'), axis=1)
-	# ioudf = copy.deepcopy(y)
-	# y.apply(lambda x: findOverLap(x, h, ioudf),axis=1)
-	# remove any invalid matches
+	# h.apply(lambda x: addBox(x, yimage, 'green',labelAug=str(x.bbid)), axis=1)
+
+	# ioudf = copy.deepcopy(y[['bbl', 'bbt', 'bbr', 'bbb', 'img', 'bbid']])
+	# y.apply(lambda x: findOverLap(x, h, ioudf,y),axis=1)
+	#remove any invalid matches
 	# ioudf.dropna(how='any',inplace = True)
 	i = ioudf.loc[ioudf['img'] == imageNum]
 	print(i)
-	print(h.confidence)
-	i.apply(lambda x: addBox(x, yimage, 'yellow', 'hlabel'), axis=1)
+	#print(h.confidence)
+	# i.apply(lambda x: addBox(x, yimage, 'yellow', 'hlabel',labelAug=' IOU ' + "{:.2f}".format(x.iou)+" YID: " +str(x.bbid) +" HID " +str(x.mid)), axis=1)
+	i.apply(lambda x: addBox(x, yimage, 'yellow', 'hlabel',labelAug=' IOU ' + "{:.2f}".format(x.iou)), axis=1)
 	# agg = ioudf[['label','iou']].groupby('label')
 	# import matplotlib.pyplot as plt
 	cv2.imshow('Y', yimage)
-	# cv2.imshow('H, IOY', himage)
+	# cv2.imshow('Yonly, IOY', yyimage)
 	cv2.waitKey(0)
 
 def matchIOUrowwithYdf(iouRow,mdf):
@@ -244,12 +301,11 @@ def constructIOUdf(df):
 
 
 def convertLablesToDFCSV(labelPath,labelValIdxDict):
-	global df
 	df = pd.DataFrame()
 	for filename in os.listdir(labelPath):
 		# print(filename)
 		tdf = pd.DataFrame(columns=labelValIdxDict)
-		tdf = pd.read_csv(labelPath + filename, delimiter=' ', names=list(labelValIdxDict.keys()), header=None)
+		tdf = pd.read_csv(os.path.join(labelPath , filename), delimiter=' ', names=list(labelValIdxDict.keys()), header=None)
 		tdf['img'] = filename[:-4]
 		df = df.append(tdf)
 	df.to_csv('cache.csv')
@@ -263,13 +319,17 @@ if __name__ == '__main__':
 	classMapping = { 0:"Car", 1:"Van", 2:"Truck", 3:"Pedestrian", 4:"Person_sitting",
                     5:"Cyclist", 6:"Tram", 7:"Misc", 8:"DontCare" }
 
-	labelPath = '../labels/'
-	detectionsPath = '../'
-	#imagePath = '../images/data_object_image_2/testing/image_2/'
-	imagePath = '../image_2/'
+	pwd = os.path.dirname(os.path.abspath(sys.argv[0]))
+	labelPath = os.path.join(pwd,'..','labels')
+	detectionsPath = os.path.join(pwd,'..')
+	imagePath = os.path.join(pwd,'..','image_2')
+
+	#labelPath = '../labels/'
+	#detectionsPath = '../'
+	#imagePath = '../image_2/'
 
 	detectionFile = 'Detection_Results.csv'
-	hdf = pd.read_csv(detectionsPath+detectionFile)
+	hdf = pd.read_csv(os.path.join(detectionsPath,detectionFile))
 	hdf['label'] = hdf.apply(lambda x: classMapping[x.label],axis=1)
 	#y axis is fliped so re flipping here for consistancy bbt is the highest in visual image
 	hdf = hdf.rename(columns={'image':'img','xmin':'bbl', 'ymin':'bbt', 'xmax':'bbr', 'ymax':'bbb'})
@@ -279,7 +339,7 @@ if __name__ == '__main__':
 
 	print(hdf)
 
-	convertLablesToDFCSV(labelPath,labelValIdxDict)
+	# convertLablesToDFCSV(labelPath,labelValIdxDict)
 
 	df = pd.read_csv('cache.csv')
 	df.rename(columns={'Unnamed: 0': 'bbid'}, inplace=True)
@@ -290,27 +350,79 @@ if __name__ == '__main__':
 	hdf = hdf[hdf['label']!="DontCare"]
 	df = df[df['label']!="DontCare"]
 
-	ioudf = constructIOUdf(df)
-	ioudf.to_csv('cacheIOU.csv')
+	# ioudf = constructIOUdf(df)
+	# ioudf.to_csv('cacheIOU.csv')
 
 
 	ioudf = pd.read_csv('cacheIOU.csv',index_col='Unnamed: 0')
 	ioudf.mid = ioudf.mid.astype(int)
 
 
-	df['mid'] = df['bbid']
+
+	mdf = df.set_index(['img','bbid'],drop=False)
+	ioudf = ioudf.set_index(['img','bbid'],drop=False)
+	#hdf = hdf.set_index(['img','bbid'],drop=False)
 
 
-	mdf = df.set_index(['img','mid'],drop=False)
-	ioudf = ioudf.set_index(['img','mid'],drop=False)
-
-	ioudf= ioudf.sort_values(by='iou')
 
 	print(len(df))
 	print(len(mdf))
 	print(len(ioudf))
+	print(len(hdf))
 
-	mdf = mdf.merge(ioudf,suffixes=('','h'),how="left",left_index=True,right_index=True)
+
+	mdf = mdf.merge(ioudf,suffixes=('','i'),how="left",left_index=True,right_index=True)
+
+	mdf['sameLabel'] = False
+	mdf['falseNegative'] = False
+	mdf.loc[mdf.hlabel.isnull(), 'falseNegative'] = True
+	mdf.loc[mdf.hlabel == mdf.label, 'sameLabel'] = True
+
+	fndf = mdf.loc[mdf['falseNegative'] == True]
+	fndf.reset_index(drop=True, inplace=True)
+
+	mdf = mdf.loc[mdf['falseNegative'] == False]
+	# mdf.loc[mdf['falseNegative'] == True, 'mid'] = -1
+	mdf.mid = mdf.mid.astype(int)
+
+	#mdf = mdf.set_index(['img','mid'],drop=False)
+
+	# fpdf = hdf[~hdf.index.isin(mdf.index)]
+	# hdf = hdf[hdf.index.isin(mdf.index)]
+
+	mdf.reset_index(drop=True,inplace=True)
+	mdf = mdf.merge(hdf[['bbl','bbr','bbt','bbb','confidence','label','img','bbid']],suffixes=('','h'),how="right",left_on=['img','mid'],right_on = ['img','bbid'])
+	mdf.hlabel = mdf.labelh
+
+	mdf['falsePositive'] = False
+	mdf.loc[mdf.falseNegative.isnull(), 'falsePositive'] = True
+	mdf.loc[mdf.falseNegative.isnull(), 'falseNegative'] = False
+	mdf = mdf.append(fndf)
+	mdf.loc[mdf.falsePositive.isnull(), 'falsePositive'] = False
+	mdf.loc[mdf.sameLabel.isnull(), 'sameLabel'] = False
+
+	#count low IOU as false positive
+	mdf.loc[mdf.iou <= .25,'falsePositive'] = True
+
+	mdf['missClassification'] = False
+	mdf.loc[(mdf.sameLabel == False) & (mdf.falseNegative == False) & (mdf.falsePositive == False), 'missClassification'] = True
+
+
+	mdf = mdf.sort_values(['img'])
+	mdf['bbid'] = mdf.groupby((mdf['img'] != mdf['img'].shift(1)).cumsum()).cumcount() + 1
+
+	mdf.drop(columns=['labelh','bbidh','bbidi','imgi'],inplace=True)
+
+
+	print('false Negative')
+	print(mdf.loc[mdf.falseNegative == True][['img', 'bbid', 'label', 'hlabel','falsePositive']].head())
+
+	print('false Positive')
+	print(mdf.loc[mdf.falsePositive == True][['img', 'bbid', 'label', 'hlabel','falseNegative']].head())
+
+	print('missclass')
+	print(mdf.loc[mdf.missClassification == True][['img', 'bbid', 'label', 'hlabel']].head())
+
 
 	print(len(df))
 	print(len(mdf))
@@ -333,9 +445,19 @@ if __name__ == '__main__':
 
 	####ex#
 
-	imageNum = 944
-	plotIOUOverlapForImageNum(imageNum,df,hdf,ioudf)
-	print()
+	#filter
+	#mdf = mdf.loc[mdf.img > mdf.img.max()*.8]
+
+	numFalseDetections = len(mdf.loc[mdf.falsePositive == True]) + len(mdf.loc[mdf.falseNegative == True])
+	print("classification ERROR RATE: " + str(len(mdf.loc[mdf.missClassification == True]) / (len(mdf) - numFalseDetections)))
+	print('detection ERROR RATE: ' + str(numFalseDetections / len(mdf)))  # need to add the 25% iou or whatever it was
+	print('% of detection ERROR that are false positives ' + str(len(mdf.loc[mdf.falsePositive == True])/numFalseDetections))
+	print('% of detection ERROR that are false negatives ' + str(len(mdf.loc[mdf.falseNegative == True])/numFalseDetections))
+
+	imageNum = 7003
+	#plotIOUOverlapForImageNum(imageNum,df,hdf,ioudf)
+	plotIOUforMerged(mdf,imageNum,imagePath)
+
 
 	#create a df with iou and predicted/ ground truth lables in places where there
 	#was no detection bb is ground truth in places of flase detection with no ovelap
